@@ -11,9 +11,21 @@ import jinja2
 
 from amti import settings
 from amti import utils
+import tqdm
 
 
 logger = logging.getLogger(__name__)
+
+def clean_str(s):
+    return "".join(c for c in s if ord(c)<128)
+
+def clean_o(o):
+    if type(o) == str:
+        return clean_str(o)
+    return o
+
+def clean_dict(d):
+    return {clean_o(k): clean_o(v) for k, v in d.items()}
 
 
 def initialize_batch_directory(
@@ -269,7 +281,7 @@ def upload_batch(
 
     hit_ids = []
     with open(data_path, 'r') as data_file:
-        for i, ln in enumerate(data_file):
+        for i, ln in tqdm.tqdm(enumerate(data_file)):
             if ln.strip() == '':
                 logger.warning(f'Line {i+1} in {data_path} is empty. Skipping.')
                 continue
@@ -277,13 +289,20 @@ def upload_batch(
                 logger.debug(f'Creating HIT {i+1} using data: {ln}')
 
             ln_data = json.loads(ln.rstrip())
+            ln_data = clean_dict(ln_data)
             question = question_template.render(**ln_data)
             requester_annotation = f'batch={batch_id}'
-            hit_response = client.create_hit_with_hit_type(
-                HITTypeId=hittype_id,
-                Question=question,
-                RequesterAnnotation=requester_annotation,
-                **hit_properties)
+            try:
+                hit_response = client.create_hit_with_hit_type(
+                    HITTypeId=hittype_id,
+                    Question=question,
+                    RequesterAnnotation=requester_annotation,
+                    **hit_properties)
+            except Exception as e:
+                print(e)
+                print(ln_data)
+                print(i)
+                raise e
             hit_id = hit_response['HIT']['HITId']
             logger.debug(f'Created New HIT (ID: {hit_id}).')
             hit_ids.append(hit_id)
@@ -295,8 +314,11 @@ def upload_batch(
 
     incomplete_file_path = os.path.join(
         batch_dir, settings.INCOMPLETE_FILE_NAME)
+    hit_id_info_path = os.path.join(batch_dir, 'id_info.json')
     with open(incomplete_file_path, 'w') as incomplete_file:
         json.dump(ids, incomplete_file)
+    with open(hit_id_info_path, 'w') as hit_id_info_file:
+        json.dump(ids, hit_id_info_file)
 
     logger.info(f'Created {i+1} HITs.')
 
